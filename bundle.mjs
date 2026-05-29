@@ -35,6 +35,7 @@ GROUNDING RULES (non-negotiable):
 - If signal is thin (few posts, low engagement, a single cluster), say so plainly rather than overstating confidence.
 - Present evidence; do NOT make the decision for the human or the caller.
 - Order items most-relevant-first unless the mode says otherwise.
+- For every post, account, quote, or statistic you cite, include its real source URL inline from the search results \u2014 never invent one. A reference is only captured as a source when its link is present, so favor citing items you can link, and write the bare URL (e.g. https://x.com/<handle>/status/<id>) next to the claim.
 - Prefix every handle with @.`;
 var ENVELOPE = 'STRUCTURE: Open with a "## Summary" (2-3 sentences \u2014 the headline answer). Then the mode-specific sections below. Close with "## Coverage": how much signal you found, the date window searched, and caveats. Do NOT write a Sources section yourself \u2014 the calling program appends one from the citations. Reference @handles inline so the prose stands on its own.';
 var PER_MODE = {
@@ -93,6 +94,7 @@ function buildTools(msg, mode) {
   if (WEB_SEARCH_MODES.includes(mode)) tools.push({ type: "web_search" });
   return tools;
 }
+var URL_RE = /https?:\/\/[^\s<>()\[\]"']+/g;
 function inferSource(url) {
   try {
     const h = new URL(url).hostname.toLowerCase();
@@ -131,50 +133,36 @@ function extractFromResponse(data) {
       else if (c && typeof c === "object") addCitation(c.url, c.title, c.source);
     }
   }
+  for (const url of text.match(URL_RE) || []) {
+    addCitation(url.replace(/[)\].,;:'"]+$/, ""));
+  }
   return { text: text.trim(), citations };
+}
+function citationLabel(c) {
+  const t = c.title?.trim();
+  if (t && !/^\d+$/.test(t)) return t;
+  try {
+    const u = new URL(c.url);
+    const host = u.hostname.replace(/^www\./, "");
+    if (c.source === "x") {
+      const handle = u.pathname.split("/").filter(Boolean)[0];
+      if (handle && handle !== "i") return "@" + handle;
+    }
+    return host;
+  } catch {
+    return c.url;
+  }
 }
 function formatSources(citations) {
   if (!citations.length) return "";
   const lines = citations.map((c, i) => {
-    const label = c.title && c.title.trim() ? c.title.trim() : c.url;
     const tag = c.source === "web" ? "[web]" : "[X]";
-    return `${i + 1}. ${tag} ${label} \u2014 ${c.url}`;
+    return `${i + 1}. ${tag} ${citationLabel(c)} \u2014 ${c.url}`;
   });
   return `
 
 ## Sources
 ${lines.join("\n")}`;
-}
-function debugDump(data) {
-  const L = [];
-  L.push("TOP-LEVEL KEYS: " + Object.keys(data || {}).join(", "));
-  const output = Array.isArray(data?.output) ? data.output : [];
-  L.push(`output[] length: ${output.length}`);
-  output.forEach((item, i) => {
-    L.push(`
-[${i}] type=${item?.type} keys={${Object.keys(item || {}).join(",")}}`);
-    for (const k of Object.keys(item || {})) {
-      const v = item[k];
-      if (typeof v === "string" && /^https?:\/\//.test(v)) L.push(`    ${k}=${v}`);
-      else if (Array.isArray(v)) {
-        L.push(`    ${k}[] len=${v.length}`);
-        if (v.length && typeof v[0] === "object") L.push(`      ${k}[0]=${JSON.stringify(v[0]).slice(0, 400)}`);
-      }
-    }
-    const content = Array.isArray(item?.content) ? item.content : [];
-    content.forEach((b, j) => {
-      L.push(`    content[${j}] type=${b?.type} keys={${Object.keys(b || {}).join(",")}}`);
-      const anns = Array.isArray(b?.annotations) ? b.annotations : [];
-      L.push(`      annotations len=${anns.length}`);
-      if (anns.length) L.push(`      ann[0]=${JSON.stringify(anns[0])}`);
-    });
-  });
-  if (Array.isArray(data?.citations)) {
-    L.push(`
-top-level citations[] len=${data.citations.length}`);
-    if (data.citations.length) L.push(`  [0]=${JSON.stringify(data.citations[0])}`);
-  }
-  return "```\n" + L.join("\n").slice(0, 9e3) + "\n```";
 }
 async function handleMessage(msg, messageId) {
   const query = (msg.query ?? "").trim();
@@ -246,10 +234,6 @@ async function handleMessage(msg, messageId) {
   } finally {
     clearTimeout(timer);
   }
-  if (msg.debug) {
-    emit(withId({ type: "response", content: debugDump(data), done: true }, messageId));
-    return;
-  }
   const { text, citations } = extractFromResponse(data);
   if (!text) {
     emit(withId({
@@ -280,8 +264,7 @@ function coerceMessage(parsed) {
     handles: src.handles,
     exclude_handles: src.exclude_handles,
     from_date: src.from_date,
-    to_date: src.to_date,
-    debug: src.debug === true
+    to_date: src.to_date
   };
 }
 function parseIncoming(raw) {

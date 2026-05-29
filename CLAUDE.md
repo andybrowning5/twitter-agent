@@ -59,13 +59,27 @@ xAI adds view/favorite-count filters, thread them through `buildTools`.
 
 ## Response parsing
 
-`output[].content[]` blocks of type `output_text` carry `text` and
-`annotations[]` of type `url_citation`. Some responses also include a flat
-top-level `citations` array. `extractFromResponse` handles both and dedupes by
-URL — keep it defensive, the exact shape has shifted across xAI API versions.
-Each citation gets a `source` (`x`/`web`): the API may supply it, otherwise
-`inferSource` derives it from the URL hostname. `formatSources` renders the
-`## Sources` list with a `[X]`/`[web]` tag per entry.
+`output[]` holds reasoning items, tool-call items (`custom_tool_call` is an
+x_search call, `web_search_call` is a web call), and a final `message` item.
+Only the `message`'s `output_text` block carries `annotations[]` of type
+`url_citation`. Two gotchas, confirmed by dumping a real response:
+
+- A citation's `title` is just the visible NUMBER (`"1"`, `"2"`), **not** a page
+  title. `citationLabel` therefore derives the label from the URL — `@handle` for
+  X posts/profiles, hostname for the open web — and only trusts `title` when it's
+  non-numeric (in case a future API version supplies real titles).
+- Grok annotates only a handful of `url_citation`s even when the body references
+  many sources, and `search_accounts` writes profile/post links straight into the
+  prose that never become annotations. So `extractFromResponse` ALSO harvests every
+  bare URL from the text via `URL_RE` and dedupes by URL. The `GROUNDING` prompt
+  tells the model to write real inline source URLs precisely so this harvest has
+  links to grab. `web_search_call` items do **not** expose their result URLs, so
+  annotations + harvested prose URLs are the only source of truth.
+
+`extractFromResponse` still also reads a flat top-level `citations` array if one
+appears — keep it defensive, the shape has shifted across xAI API versions. Each
+citation's `source` (`x`/`web`) comes from the API or `inferSource(url)`;
+`formatSources` renders the `## Sources` list with a `[X]`/`[web]` tag per entry.
 
 ## Build
 
@@ -113,6 +127,8 @@ Verify per mode: the `tools` array (only `x_search` for search_tweets/
 search_accounts; `x_search` + `web_search` for trending/expert_opinions), the
 trending `from_date = now − 3d` default (and that a caller date overrides it),
 handle parsing, that `instructions` carry the `GROUNDING` block + the right mode
-block, and that `## Sources` renders with `[X]`/`[web]` labels from both
-`url_citation` annotations and the flat `citations` array. Also confirm the
-stdin path echoes `message_id` and exits cleanly on `{"type":"shutdown"}`.
+block, and that `## Sources` renders with `[X]`/`[web]` labels. Specifically
+cover the citation logic: a numeric `title` is ignored in favor of an
+`@handle`/hostname label, and a bare URL written only in the body text is
+harvested into `## Sources`. Also confirm the stdin path echoes `message_id` and
+exits cleanly on `{"type":"shutdown"}`.
