@@ -140,7 +140,7 @@ function extractFromResponse(data) {
 }
 function citationLabel(c) {
   const t = c.title?.trim();
-  if (t && !/^\d+$/.test(t)) return t;
+  if (t && !/^\d+$/.test(t) && !t.includes("://")) return t;
   try {
     const u = new URL(c.url);
     const host = u.hostname.replace(/^www\./, "");

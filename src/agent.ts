@@ -302,13 +302,14 @@ function extractFromResponse(data: any): { text: string; citations: Citation[] }
   return { text: text.trim(), citations };
 }
 
-// xAI's url_citation `title` is just the visible citation NUMBER ("1", "2"),
-// not a page title, so it makes a useless label. Derive a human label from the
-// URL instead: @handle for X posts/profiles, hostname for the open web. Keep a
-// real title only if the API ever provides a non-numeric one.
+// xAI's url_citation `title` is useless as a label: sometimes the visible
+// citation NUMBER ("1", "2"), sometimes the URL itself. Either way, derive a
+// human label from the URL — @handle for X posts/profiles, hostname for the
+// open web — and only trust `title` when it's a genuine page title (non-numeric
+// and not a URL), in case a future API version supplies one.
 function citationLabel(c: Citation): string {
   const t = c.title?.trim();
-  if (t && !/^\d+$/.test(t)) return t;
+  if (t && !/^\d+$/.test(t) && !t.includes("://")) return t;
   try {
     const u = new URL(c.url);
     const host = u.hostname.replace(/^www\./, "");
