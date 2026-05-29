@@ -39,8 +39,12 @@ function emit(obj: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
-function activity(tool: string, description: string): void {
-  emit({ type: "activity", tool, description });
+function withId(obj: Record<string, unknown>, messageId?: string): Record<string, unknown> {
+  return messageId ? { ...obj, message_id: messageId } : obj;
+}
+
+function activity(tool: string, description: string, messageId?: string): void {
+  emit(withId({ type: "activity", tool, description }, messageId));
 }
 
 // --------------------------------------------------------------------------
@@ -191,32 +195,32 @@ function formatSources(citations: Citation[]): string {
 // Core handler
 // --------------------------------------------------------------------------
 
-async function handleMessage(msg: IncomingMessage): Promise<void> {
+async function handleMessage(msg: IncomingMessage, messageId?: string): Promise<void> {
   const query = (msg.query ?? "").trim();
   const mode: Mode = VALID_MODES.includes(msg.mode as Mode)
     ? (msg.mode as Mode)
     : "search_tweets";
 
   if (!query) {
-    emit({
+    emit(withId({
       type: "response",
       content: "Error: no query provided. Pass a search task in the `query` field.",
       done: true,
       error: true,
-    });
+    }, messageId));
     return;
   }
 
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) {
-    emit({
+    emit(withId({
       type: "response",
       content:
         "Error: XAI_API_KEY is not set. This agent requires an xAI (Grok) key " +
         "to call the X Search API.",
       done: true,
       error: true,
-    });
+    }, messageId));
     return;
   }
 
@@ -224,7 +228,7 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   const handleNote = tool.allowed_x_handles
     ? ` handles=${(tool.allowed_x_handles as string[]).join(",")}`
     : "";
-  activity("x_search", `mode=${mode}${handleNote} query=${query}`);
+  activity("x_search", `mode=${mode}${handleNote} query=${query}`, messageId);
 
   const body = {
     model: MODEL,
@@ -245,51 +249,56 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
-      emit({
+      emit(withId({
         type: "response",
         content: `X Search request failed (HTTP ${res.status}): ${detail.slice(0, 600)}`,
         done: true,
         error: true,
-      });
+      }, messageId));
       return;
     }
     data = await res.json();
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    emit({
+    emit(withId({
       type: "response",
       content: `Twitter agent failed: ${detail}`,
       done: true,
       error: true,
-    });
+    }, messageId));
     return;
   }
 
   const { text, citations } = extractFromResponse(data);
   if (!text) {
-    emit({
+    emit(withId({
       type: "response",
       content:
         "No results. Grok returned no text for this query — try rephrasing, " +
         "widening the date range, or removing handle filters.",
       done: true,
-    });
+    }, messageId));
     return;
   }
 
-  emit({ type: "response", content: text + formatSources(citations), done: true });
+  emit(withId({ type: "response", content: text + formatSources(citations), done: true }, messageId));
 }
 
 // --------------------------------------------------------------------------
 // Input parsing & main loop
 // --------------------------------------------------------------------------
 
+type ParsedLine =
+  | { control: "shutdown" }
+  | { control: "ignore" }
+  | { msg: IncomingMessage; messageId?: string };
+
 function coerceMessage(parsed: any): IncomingMessage {
   const src = parsed.inputs && typeof parsed.inputs === "object" ? parsed.inputs : parsed;
   const query =
     typeof src.query === "string"
       ? src.query
-      : parsed.type === "message" && typeof parsed.content === "string"
+      : typeof parsed.content === "string"
         ? parsed.content
         : "";
   return {
@@ -302,17 +311,23 @@ function coerceMessage(parsed: any): IncomingMessage {
   };
 }
 
-function parseIncoming(raw: string): IncomingMessage {
+function parseIncoming(raw: string): ParsedLine {
   const trimmed = raw.trim();
-  if (!trimmed) return { query: "" };
+  if (!trimmed) return { control: "ignore" };
   if (trimmed.startsWith("{")) {
     try {
-      return coerceMessage(JSON.parse(trimmed));
+      const parsed = JSON.parse(trimmed);
+      if (parsed.type === "shutdown") return { control: "shutdown" };
+      if (parsed.type === "workspace_patch") return { control: "ignore" };
+      return {
+        msg: coerceMessage(parsed),
+        messageId: typeof parsed.message_id === "string" ? parsed.message_id : undefined,
+      };
     } catch {
       // fall through — treat as plain query text
     }
   }
-  return { query: trimmed };
+  return { msg: { query: trimmed } };
 }
 
 async function main(): Promise<void> {
@@ -321,14 +336,23 @@ async function main(): Promise<void> {
   // One-shot CLI mode (Primordial dry-run path).
   const argPrompt = process.argv.slice(2).join(" ").trim();
   if (argPrompt) {
-    await handleMessage(parseIncoming(argPrompt));
+    const parsed = parseIncoming(argPrompt);
+    if ("msg" in parsed) await handleMessage(parsed.msg, parsed.messageId);
     return;
   }
 
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line.trim()) continue;
-    await handleMessage(parseIncoming(line));
+    const parsed = parseIncoming(line);
+    if ("control" in parsed) {
+      if (parsed.control === "shutdown") {
+        rl.close();
+        return;
+      }
+      continue;
+    }
+    await handleMessage(parsed.msg, parsed.messageId);
   }
 }
 

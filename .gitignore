@@ -1,6 +1,5 @@
 node_modules/
 dist/
-bundle.mjs
 *.log
 .env
 .DS_Store

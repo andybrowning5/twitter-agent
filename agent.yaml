@@ -1,14 +1,11 @@
 name: twitter-agent
 display_name: Twitter (X) Agent
 description: >
-  Searches and reads public X (Twitter) using xAI Grok's server-side x_search
-  tool. Three modes: "search_tweets" (semantic search for posts about a topic,
-  not just keyword matching), "search_accounts" (find relevant accounts/handles
-  and what they post about), and "trending" (what's happening / being discussed
-  right now on a topic). Supports restricting to specific handles and date
-  windows. Returns Grok's synthesized answer plus source links to the
-  originating posts. Reads PUBLIC X only — it cannot access a private home
-  timeline.
+  Searches public X (Twitter) via xAI Grok's server-side x_search tool. Modes:
+  search_tweets (semantic post search by meaning, not keywords), search_accounts
+  (find relevant handles and what they post), trending (what's being discussed
+  now on a topic). Supports handle and date filters. Returns Grok's synthesized
+  answer plus links to source posts. Public X only — no private home timeline.
 version: 0.1.0
 author:
   name: Primordial Morpheus
@@ -17,7 +14,7 @@ author:
 runtime:
   language: node
   run_command: node bundle.mjs
-  setup_command: npm install && npm run build
+  setup_command: test -f bundle.mjs || (npm install && npm run build)
   dependencies: package.json
   default_provider: xai
 
