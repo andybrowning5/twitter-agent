@@ -1,21 +1,24 @@
 /**
- * Twitter (X) Agent — searches and reads public X via xAI Grok's server-side
- * x_search tool (the Agent Tools API that replaced the retired Live Search
- * `search_parameters` API).
+ * Twitter (X) Research Agent — searches and reads public X via xAI Grok's
+ * server-side Agent Tools (x_search, and web_search for cross-checking). Built
+ * to be called by another program (often Claude Code doing research): every
+ * answer is structured Markdown with an inline-cited, self-contained contract.
  *
  * Implementation notes:
  *   - No SDK dependency. Uses global fetch (Node 20+) to POST to the xAI
  *     Responses API. The Primordial security proxy injects the real key and
  *     forwards localhost -> api.x.ai, so we send to XAI_BASE_URL with the
  *     session token in XAI_API_KEY.
- *   - x_search runs server-side: Grok executes the search itself and returns
- *     one synthesized message with url_citation annotations. There is no
- *     client-side tool loop to run.
+ *   - Server-side tools run inside Grok: it executes the search itself and
+ *     returns one synthesized message with url_citation annotations. There is
+ *     no client-side tool loop to run.
  *
  * Protocol: NDJSON over stdin/stdout.
  *   - First line on startup: {"type":"ready"}
  *   - Each message emits an {"type":"activity",...} event, then a final
  *     {"type":"response","content":"...","done":true} payload.
+ *
+ * Modes: search_tweets | search_accounts | trending | expert_opinions.
  */
 
 import * as readline from "node:readline";
@@ -24,7 +27,7 @@ import * as readline from "node:readline";
 // Types & protocol helpers
 // --------------------------------------------------------------------------
 
-type Mode = "search_tweets" | "search_accounts" | "trending";
+type Mode = "search_tweets" | "search_accounts" | "trending" | "expert_opinions";
 
 interface IncomingMessage {
   query: string;
@@ -52,9 +55,14 @@ function activity(tool: string, description: string, messageId?: string): void {
 // --------------------------------------------------------------------------
 
 const MODEL = "grok-4.3";
-const VALID_MODES: Mode[] = ["search_tweets", "search_accounts", "trending"];
+const VALID_MODES: Mode[] = ["search_tweets", "search_accounts", "trending", "expert_opinions"];
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_HANDLES = 20;
+const REQUEST_TIMEOUT_MS = 120_000;
+
+// Modes that also get web_search alongside x_search, to cross-check claims
+// against news/blogs/docs and verify who someone claims to be.
+const WEB_SEARCH_MODES: Mode[] = ["expert_opinions", "trending"];
 
 function apiBase(): string {
   // The proxy sets XAI_BASE_URL to a localhost URL. Fall back to the public
@@ -62,48 +70,115 @@ function apiBase(): string {
   return (process.env.XAI_BASE_URL || "https://api.x.ai").replace(/\/+$/, "");
 }
 
+function isoDaysAgo(n: number): string {
+  return new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+}
+
 // --------------------------------------------------------------------------
-// System prompts per mode
+// System prompts
 // --------------------------------------------------------------------------
+
+// Shared spine: the rules that keep every answer honest and machine-usable.
+const GROUNDING =
+  "You are the Twitter (X) Research Agent. A calling PROGRAM (often Claude Code " +
+  "doing research) reads your output, so be information-dense, structured, and " +
+  "self-contained.\n\n" +
+  "GROUNDING RULES (non-negotiable):\n" +
+  "- Ground every claim in real posts/results the tools return. Never invent " +
+  "posts, handles, quotes, numbers, or links.\n" +
+  "- Quotes must be VERBATIM. If you are not certain of the exact wording, " +
+  "paraphrase plainly or omit it — never approximate inside quotation marks.\n" +
+  "- For any field you cannot fill from evidence, write \"—\". Never guess.\n" +
+  "- Author identity/credentials are model belief, not verified fact: write them " +
+  "as \"model says: <claim> (unverified)\".\n" +
+  "- Do NOT manufacture balance. Report the distribution you actually find; if " +
+  "opinion is lopsided, say so. Don't invent a dissenting side to seem fair.\n" +
+  "- Don't fabricate precise proportions. Use \"most\", \"several\", \"a few\" — " +
+  "never invented percentages or vote counts.\n" +
+  "- If signal is thin (few posts, low engagement, a single cluster), say so " +
+  "plainly rather than overstating confidence.\n" +
+  "- Present evidence; do NOT make the decision for the human or the caller.\n" +
+  "- Order items most-relevant-first unless the mode says otherwise.\n" +
+  "- Prefix every handle with @.";
+
+// Shared output envelope.
+const ENVELOPE =
+  "STRUCTURE: Open with a \"## Summary\" (2-3 sentences — the headline answer). " +
+  "Then the mode-specific sections below. Close with \"## Coverage\": how much " +
+  "signal you found, the date window searched, and caveats. Do NOT write a " +
+  "Sources section yourself — the calling program appends one from the " +
+  "citations. Reference @handles inline so the prose stands on its own.";
+
+const PER_MODE: Record<Mode, string> = {
+  search_tweets:
+    "MODE = SEARCH_TWEETS. Interpret the query SEMANTICALLY (by meaning, not " +
+    "literal keywords) and surface the most relevant posts.\n" +
+    "Output a \"## Findings\" section. For each notable post, a bullet with " +
+    "these labeled fields (use \"—\" for any you can't fill):\n" +
+    "- stance: supportive | critical | mixed | neutral (relative to the query's question)\n" +
+    "- on: the specific point or subtopic the post addresses\n" +
+    "- basis: firsthand experience | benchmark/data | opinion | secondhand | joke\n" +
+    "- specifics: concrete details the post gives (versions, numbers, names)\n" +
+    "- recency: how recent (use the post date when known)\n" +
+    "- author: @handle — model says: who they are (unverified)\n" +
+    "- quote: one VERBATIM line if you are sure of the wording, else omit\n" +
+    "If the query is a DEBATE (X vs Y, is Z good/bad), group findings under " +
+    "\"### Supportive\", \"### Critical\", and \"### Mixed\". If it is RELEASE or " +
+    "BUG intel (e.g. \"problems with <release>\"), first decompose it into the " +
+    "concrete failure modes people report and group findings under a " +
+    "\"### <failure mode>\" header for each, noting impact and any workaround. " +
+    "Aim for 5-12 posts unless the query is narrow.",
+
+  search_accounts:
+    "MODE = SEARCH_ACCOUNTS. The caller wants to discover ACCOUNTS, not " +
+    "individual posts. Output an \"## Accounts\" section, one \"### @handle\" per " +
+    "account with:\n" +
+    "- who: model says: who they are (unverified)\n" +
+    "- relevance: why they matter for THIS topic (original researcher, " +
+    "breaking-news source, frequently cited, maintainer, etc.)\n" +
+    "- profile: https://x.com/<handle>\n" +
+    "- examples: up to 2 representative post links (omit if none found)\n" +
+    "Rank by originality of contribution first, then how often others cite or " +
+    "quote them, then recency of activity. List 5-15 accounts, most relevant first.",
+
+  trending:
+    "MODE = TRENDING / REAL-TIME. Summarize what is happening RIGHT NOW on X " +
+    "about the topic. The \"## Summary\" must open with \"As of <time>:\" and an " +
+    "overall status of ACTIVE, RESOLVED, or UNCLEAR.\n" +
+    "Output a \"## Threads\" section. For each distinct thread or claim, a bullet " +
+    "with (use \"—\" for any you can't fill):\n" +
+    "- status: active | resolved | unclear. RESOLUTION BEATS AGE — a fixed issue " +
+    "is resolved even if posts are recent; an official fix/clarification flips it.\n" +
+    "- recency: the newest activity you see\n" +
+    "- volume: rising | steady | fading | isolated\n" +
+    "- driven_by: the @handles driving this thread\n" +
+    "- official: any official/maintainer/company @handle response (else \"—\")\n" +
+    "- claim: the core claim or development\n" +
+    "- counter: notable pushback or correction (else \"—\")\n" +
+    "- quote: one VERBATIM line if you are sure, else omit\n" +
+    "In \"## Coverage\" include an \"as_of:\" timestamp. Prefer recent posts, and " +
+    "use web_search to cross-check breaking claims against news/official sources.",
+
+  expert_opinions:
+    "MODE = EXPERT_OPINIONS. The caller is making a SYSTEM / ARCHITECTURE / " +
+    "TECH-CHOICE decision and wants how credible practitioners actually lean. " +
+    "Use BOTH x_search and web_search (engineering blogs, postmortems, docs) and " +
+    "label where each point came from with [X] or [web].\n" +
+    "Sections (in this order):\n" +
+    "## Decision — restate the decision or tradeoff in one line.\n" +
+    "## Where practitioners land — group under \"### <Option>\" headers. Per " +
+    "option, bullets with: favors (the option), who (@handle/author — model " +
+    "says ... (unverified)), basis (firsthand prod | benchmark | opinion), " +
+    "specifics (scale, numbers, stack), quote (verbatim or omit), source ([X]/[web]).\n" +
+    "## Tradeoff axes people actually raise — the real decision dimensions " +
+    "(operational cost, scaling cliffs, hiring, lock-in, etc.), each with who raises it.\n" +
+    "## Real-world prod reports — concrete \"we ran X at Y scale and Z happened\" " +
+    "accounts, each with a [X]/[web] source label.\n" +
+    "Surface the landscape; do NOT recommend a choice — let the human decide.",
+};
 
 function buildSystemPrompt(mode: Mode): string {
-  const base =
-    "You are the Twitter (X) Agent. You search PUBLIC X (Twitter) using the " +
-    "x_search tool and report back to a calling program. Always ground your " +
-    "answer in actual posts you found via x_search — never invent posts, " +
-    "handles, or quotes. If x_search returns nothing relevant, say so plainly. " +
-    "Quote handles with a leading @. Be concise and information-dense; the " +
-    "caller wants signal, not commentary.";
-
-  const perMode: Record<Mode, string> = {
-    search_tweets:
-      "MODE = SEARCH_TWEETS. Interpret the query semantically (by meaning, " +
-      "not just literal keywords) and surface the most relevant posts. For " +
-      "each notable post, give: the @handle, a one-line paraphrase or short " +
-      "quote, and what makes it relevant. Group by theme/stance when the " +
-      "query is a debate. Aim for 5-12 posts unless the query is narrow.",
-    search_accounts:
-      "MODE = SEARCH_ACCOUNTS. The caller wants to discover ACCOUNTS, not " +
-      "individual posts. Identify the most relevant @handles for the topic. " +
-      "For each, give: the @handle, a one-line description of who they are / " +
-      "what they post about, and why they matter for this topic (e.g. " +
-      "frequently cited, original researcher, breaking-news source). List " +
-      "5-15 accounts, most relevant first.",
-    trending:
-      "MODE = TRENDING. Summarize what is being discussed RIGHT NOW on X " +
-      "about this topic: the dominant narratives, notable new claims, who is " +
-      "driving the conversation, and any emerging consensus or split. Lead " +
-      "with a 2-3 sentence summary, then bullet the key threads with the " +
-      "@handles driving each. Prefer recent posts.",
-  };
-
-  const format =
-    "After your answer, the calling program will append a Sources section " +
-    "automatically from the citations — you do NOT need to write a Sources " +
-    "list yourself, but DO reference handles inline so the answer is " +
-    "self-contained.";
-
-  return `${base}\n\n${perMode[mode]}\n\n${format}`;
+  return `${GROUNDING}\n\n${ENVELOPE}\n\n${PER_MODE[mode]}`;
 }
 
 // --------------------------------------------------------------------------
@@ -120,18 +195,33 @@ function parseHandles(raw: string | undefined): string[] | undefined {
   return list.length ? list : undefined;
 }
 
-function buildXSearchTool(msg: IncomingMessage): Record<string, unknown> {
-  const tool: Record<string, unknown> = {
+// Builds the tools array. x_search is always present; web_search is added for
+// the modes that benefit from cross-checking against the open web.
+function buildTools(msg: IncomingMessage, mode: Mode): Record<string, unknown>[] {
+  const x: Record<string, unknown> = {
     type: "x_search",
     enable_image_understanding: true,
+    enable_video_understanding: true,
   };
+
   const allowed = parseHandles(msg.handles);
   const excluded = parseHandles(msg.exclude_handles);
-  if (allowed) tool.allowed_x_handles = allowed;
-  if (excluded) tool.excluded_x_handles = excluded;
-  if (msg.from_date && ISO_DATE.test(msg.from_date)) tool.from_date = msg.from_date;
-  if (msg.to_date && ISO_DATE.test(msg.to_date)) tool.to_date = msg.to_date;
-  return tool;
+  if (allowed) x.allowed_x_handles = allowed;
+  if (excluded) x.excluded_x_handles = excluded;
+
+  // Caller-supplied dates always win. Otherwise only trending gets an automatic
+  // recency window (last 3 days); other modes stay open-ended on purpose so we
+  // don't silently hide older, still-relevant discussion. We never auto-set
+  // to_date — "up to now" is the right default.
+  const from = msg.from_date && ISO_DATE.test(msg.from_date) ? msg.from_date : undefined;
+  const to = msg.to_date && ISO_DATE.test(msg.to_date) ? msg.to_date : undefined;
+  if (from) x.from_date = from;
+  if (to) x.to_date = to;
+  if (!from && !to && mode === "trending") x.from_date = isoDaysAgo(3);
+
+  const tools: Record<string, unknown>[] = [x];
+  if (WEB_SEARCH_MODES.includes(mode)) tools.push({ type: "web_search" });
+  return tools;
 }
 
 // --------------------------------------------------------------------------
@@ -141,6 +231,18 @@ function buildXSearchTool(msg: IncomingMessage): Record<string, unknown> {
 interface Citation {
   url: string;
   title?: string;
+  source: "x" | "web";
+}
+
+function inferSource(url: string): "x" | "web" {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return h === "x.com" || h === "twitter.com" || h.endsWith(".x.com") || h.endsWith(".twitter.com")
+      ? "x"
+      : "web";
+  } catch {
+    return "web";
+  }
 }
 
 function extractFromResponse(data: any): { text: string; citations: Citation[] } {
@@ -148,10 +250,11 @@ function extractFromResponse(data: any): { text: string; citations: Citation[] }
   const citations: Citation[] = [];
   const seen = new Set<string>();
 
-  const addCitation = (url: unknown, title?: unknown) => {
+  const addCitation = (url: unknown, title?: unknown, source?: unknown) => {
     if (typeof url !== "string" || !url || seen.has(url)) return;
     seen.add(url);
-    citations.push({ url, title: typeof title === "string" ? title : undefined });
+    const src = source === "x" || source === "web" ? source : inferSource(url);
+    citations.push({ url, title: typeof title === "string" ? title : undefined, source: src });
   };
 
   // Convenience aggregate some responses include.
@@ -165,17 +268,17 @@ function extractFromResponse(data: any): { text: string; citations: Citation[] }
         if (!data?.output_text) text += block.text;
         const anns = Array.isArray(block.annotations) ? block.annotations : [];
         for (const a of anns) {
-          if (a?.type === "url_citation") addCitation(a.url, a.title);
+          if (a?.type === "url_citation") addCitation(a.url, a.title, a.source);
         }
       }
     }
   }
 
-  // Some responses also surface a flat citations array of URLs.
+  // Some responses also surface a flat citations array.
   if (Array.isArray(data?.citations)) {
     for (const c of data.citations) {
       if (typeof c === "string") addCitation(c);
-      else if (c && typeof c === "object") addCitation(c.url, c.title);
+      else if (c && typeof c === "object") addCitation(c.url, c.title, c.source);
     }
   }
 
@@ -186,9 +289,10 @@ function formatSources(citations: Citation[]): string {
   if (!citations.length) return "";
   const lines = citations.map((c, i) => {
     const label = c.title && c.title.trim() ? c.title.trim() : c.url;
-    return `${i + 1}. ${label} — ${c.url}`;
+    const tag = c.source === "web" ? "[web]" : "[X]";
+    return `${i + 1}. ${tag} ${label} — ${c.url}`;
   });
-  return `\n\nSources:\n${lines.join("\n")}`;
+  return `\n\n## Sources\n${lines.join("\n")}`;
 }
 
 // --------------------------------------------------------------------------
@@ -224,19 +328,23 @@ async function handleMessage(msg: IncomingMessage, messageId?: string): Promise<
     return;
   }
 
-  const tool = buildXSearchTool(msg);
-  const handleNote = tool.allowed_x_handles
-    ? ` handles=${(tool.allowed_x_handles as string[]).join(",")}`
+  const tools = buildTools(msg, mode);
+  const toolNames = tools.map((t) => String(t.type)).join("+");
+  const x = tools[0];
+  const handleNote = x.allowed_x_handles
+    ? ` handles=${(x.allowed_x_handles as string[]).join(",")}`
     : "";
-  activity("x_search", `mode=${mode}${handleNote} query=${query}`, messageId);
+  activity(toolNames, `mode=${mode}${handleNote} query=${query}`, messageId);
 
   const body = {
     model: MODEL,
     input: [{ role: "user", content: query }],
     instructions: buildSystemPrompt(mode),
-    tools: [tool],
+    tools,
   };
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let data: any;
   try {
     const res = await fetch(`${apiBase()}/v1/responses`, {
@@ -246,6 +354,7 @@ async function handleMessage(msg: IncomingMessage, messageId?: string): Promise<
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
@@ -259,7 +368,12 @@ async function handleMessage(msg: IncomingMessage, messageId?: string): Promise<
     }
     data = await res.json();
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
+    const aborted = err instanceof Error && err.name === "AbortError";
+    const detail = aborted
+      ? `request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`
+      : err instanceof Error
+        ? err.message
+        : String(err);
     emit(withId({
       type: "response",
       content: `Twitter agent failed: ${detail}`,
@@ -267,6 +381,8 @@ async function handleMessage(msg: IncomingMessage, messageId?: string): Promise<
       error: true,
     }, messageId));
     return;
+  } finally {
+    clearTimeout(timer);
   }
 
   const { text, citations } = extractFromResponse(data);

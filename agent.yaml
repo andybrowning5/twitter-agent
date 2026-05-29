@@ -1,12 +1,14 @@
 name: twitter-agent
-display_name: Twitter (X) Agent
+display_name: Twitter (X) Research Agent
 description: >
-  Searches public X (Twitter) via xAI Grok's server-side x_search tool. Modes:
-  search_tweets (semantic post search by meaning, not keywords), search_accounts
-  (find relevant handles and what they post), trending (what's being discussed
-  now on a topic). Supports handle and date filters. Returns Grok's synthesized
-  answer plus links to source posts. Public X only — no private home timeline.
-version: 0.1.0
+  Research agent for public X (Twitter) via xAI Grok's server-side search.
+  Modes: search_tweets (semantic post search), search_accounts (find relevant
+  handles), trending (what's happening now, with active/resolved status),
+  expert_opinions (how credible practitioners lean on a tech/architecture
+  choice). Cross-checks the web where useful. Returns structured, inline-cited
+  Markdown for a calling program. Public X only — no private home timeline.
+version: 0.2.0
+category: research
 author:
   name: Primordial Morpheus
   github: andybrowning5
@@ -38,16 +40,21 @@ inputs:
     required: false
     default: search_tweets
     description: >
-      One of "search_tweets" (default — semantic search for posts on a topic),
-      "search_accounts" (identify relevant accounts/handles and what they post
-      about), or "trending" (summarize what's being discussed right now on the
-      topic).
+      One of: "search_tweets" (default — semantic search for posts on a topic,
+      auto-grouped by stance for debates or by failure mode for release/bug
+      intel); "search_accounts" (identify the relevant accounts/handles for a
+      topic and what they post); "trending" (what's being discussed right now,
+      each thread tagged active/resolved/unclear); "expert_opinions" (for a
+      system/architecture/tech-choice decision, how credible practitioners lean,
+      cross-checked against engineering blogs and docs).
   - name: handles
     type: string
     required: false
     description: >
-      Optional comma-separated list of X handles (without @, max 20) to
-      restrict the search to. Example: "sama,karpathy,ylecun".
+      Optional comma-separated list of X handles (without @, max 20). WARNING:
+      this RESTRICTS the search to ONLY these accounts — it does not "prefer" or
+      "boost" them. Leave it empty to search all of X. Use it only when you
+      truly want results from these handles alone. Example: "sama,karpathy".
   - name: exclude_handles
     type: string
     required: false
@@ -67,8 +74,11 @@ outputs:
   - name: response
     type: string
     description: >
-      Grok's synthesized answer to the query, followed by a "Sources:" section
-      listing the originating X posts (handle + link) that back the answer.
+      Structured Markdown built for a calling program: a "## Summary" headline,
+      mode-specific sections (## Findings / ## Accounts / ## Threads / decision
+      sections), a "## Coverage" note on signal and date window, and a final
+      "## Sources" list of cited posts/pages labeled [X] or [web]. Quotes are
+      verbatim or omitted; unknown fields are "—"; nothing is fabricated.
 
 tags:
   - twitter
@@ -77,3 +87,9 @@ tags:
   - search
   - grok
   - trending
+  - research
+  - accounts
+  - expert-opinions
+  - architecture
+  - opinions
+  - sentiment
