@@ -11,10 +11,12 @@ behavioral contract is fixed:
 - Public X only. No private home timeline, no authenticated-account features.
 - Four modes: `search_tweets`, `search_accounts`, `trending`, `expert_opinions`.
 - Always ground answers in real results — never fabricate posts, handles,
-  quotes, numbers, or links. Quotes are verbatim or omitted; unknown fields are
-  `—`; author identity is flagged `model says: … (unverified)`; present evidence
-  rather than deciding for the caller. These live in the shared `GROUNDING`
-  constant in `src/agent.ts`.
+  quotes, numbers, or links. Every cited post is reproduced IN FULL as a verbatim
+  Markdown blockquote (and the whole thread, in order, when the thread carries the
+  point), with missing wording marked `[…]` rather than approximated or invented;
+  unknown fields are `—`; author identity is flagged `model says: … (unverified)`;
+  present evidence rather than deciding for the caller. These live in the shared
+  `GROUNDING` constant in `src/agent.ts`.
 - Output is structured Markdown: `## Summary` → mode sections → `## Coverage`,
   then an agent-appended `## Sources` list with `[X]`/`[web]` labels.
 

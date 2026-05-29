@@ -86,8 +86,13 @@ const GROUNDING =
   "GROUNDING RULES (non-negotiable):\n" +
   "- Ground every claim in real posts/results the tools return. Never invent " +
   "posts, handles, quotes, numbers, or links.\n" +
-  "- Quotes must be VERBATIM. If you are not certain of the exact wording, " +
-  "paraphrase plainly or omit it — never approximate inside quotation marks.\n" +
+  "- Reproduce the FULL text of every post you cite, VERBATIM from the search " +
+  "results — exact wording, emoji, hashtags, and line breaks — as a Markdown " +
+  "blockquote (prefix each line with \"> \"). When a cited post sits in a THREAD " +
+  "that carries the point, include EVERY post in that thread, in order. Reproduce " +
+  "only text the tools actually returned: if you don't have the exact wording, " +
+  "include the part you have and mark omissions with \"[…]\" — never approximate " +
+  "inside the blockquote or reconstruct a post from memory.\n" +
   "- For any field you cannot fill from evidence, write \"—\". Never guess.\n" +
   "- Author identity/credentials are model belief, not verified fact: write them " +
   "as \"model says: <claim> (unverified)\".\n" +
@@ -126,7 +131,7 @@ const PER_MODE: Record<Mode, string> = {
     "- specifics: concrete details the post gives (versions, numbers, names)\n" +
     "- recency: how recent (use the post date when known)\n" +
     "- author: @handle — model says: who they are (unverified)\n" +
-    "- quote: one VERBATIM line if you are sure of the wording, else omit\n" +
+    "- text: the post's FULL text as a verbatim Markdown blockquote — and if it sits in a thread that carries the point, every post in that thread, in order\n" +
     "If the query is a DEBATE (X vs Y, is Z good/bad), group findings under " +
     "\"### Supportive\", \"### Critical\", and \"### Mixed\". If it is RELEASE or " +
     "BUG intel (e.g. \"problems with <release>\"), first decompose it into the " +
@@ -142,7 +147,7 @@ const PER_MODE: Record<Mode, string> = {
     "- relevance: why they matter for THIS topic (original researcher, " +
     "breaking-news source, frequently cited, maintainer, etc.)\n" +
     "- profile: https://x.com/<handle>\n" +
-    "- examples: up to 2 representative post links (omit if none found)\n" +
+    "- examples: up to 2 representative posts — each as its FULL verbatim text in a Markdown blockquote followed by the post link (omit if none found)\n" +
     "Rank by originality of contribution first, then how often others cite or " +
     "quote them, then recency of activity. List 5-15 accounts, most relevant first.",
 
@@ -160,7 +165,7 @@ const PER_MODE: Record<Mode, string> = {
     "- official: any official/maintainer/company @handle response (else \"—\")\n" +
     "- claim: the core claim or development\n" +
     "- counter: notable pushback or correction (else \"—\")\n" +
-    "- quote: one VERBATIM line if you are sure, else omit\n" +
+    "- text: the FULL verbatim text of the key post(s) in the thread, as Markdown blockquotes, in order\n" +
     "In \"## Coverage\" include an \"as_of:\" timestamp. Prefer recent posts, and " +
     "use web_search to cross-check breaking claims against news/official sources.",
 
@@ -174,11 +179,11 @@ const PER_MODE: Record<Mode, string> = {
     "## Where practitioners land — group under \"### <Option>\" headers. Per " +
     "option, bullets with: favors (the option), who (@handle/author — model " +
     "says ... (unverified)), basis (firsthand prod | benchmark | opinion), " +
-    "specifics (scale, numbers, stack), quote (verbatim or omit), source ([X]/[web]).\n" +
+    "specifics (scale, numbers, stack), text (the post's FULL verbatim text as a blockquote), source ([X]/[web]).\n" +
     "## Tradeoff axes people actually raise — the real decision dimensions " +
     "(operational cost, scaling cliffs, hiring, lock-in, etc.), each with who raises it.\n" +
     "## Real-world prod reports — concrete \"we ran X at Y scale and Z happened\" " +
-    "accounts, each with a [X]/[web] source label.\n" +
+    "accounts: reproduce each report's FULL text verbatim as a blockquote, each with a [X]/[web] source label.\n" +
     "Surface the landscape; do NOT recommend a choice — let the human decide.",
 };
 
