@@ -410,6 +410,22 @@ type ParsedLine =
   | { msg: IncomingMessage; messageId?: string };
 
 function coerceMessage(parsed: any): IncomingMessage {
+  // Primordial's transport wraps a caller's string as {type:"message",
+  // content:"..."}. That single string is often the ONLY channel a caller has
+  // (e.g. Claude Code via the MCP run_agent/send_message tools), so accept a
+  // structured inputs object passed AS that string — otherwise mode/handles
+  // would be unreachable and every call would default to search_tweets.
+  if (typeof parsed?.content === "string") {
+    const inner = parsed.content.trim();
+    if (inner.startsWith("{")) {
+      try {
+        const reparsed = JSON.parse(inner);
+        if (reparsed && typeof reparsed === "object") return coerceMessage(reparsed);
+      } catch {
+        // not JSON — fall through and treat content as the query
+      }
+    }
+  }
   const src = parsed.inputs && typeof parsed.inputs === "object" ? parsed.inputs : parsed;
   const query =
     typeof src.query === "string"

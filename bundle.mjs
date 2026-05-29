@@ -227,6 +227,16 @@ async function handleMessage(msg, messageId) {
   emit(withId({ type: "response", content: text + formatSources(citations), done: true }, messageId));
 }
 function coerceMessage(parsed) {
+  if (typeof parsed?.content === "string") {
+    const inner = parsed.content.trim();
+    if (inner.startsWith("{")) {
+      try {
+        const reparsed = JSON.parse(inner);
+        if (reparsed && typeof reparsed === "object") return coerceMessage(reparsed);
+      } catch {
+      }
+    }
+  }
   const src = parsed.inputs && typeof parsed.inputs === "object" ? parsed.inputs : parsed;
   const query = typeof src.query === "string" ? src.query : typeof parsed.content === "string" ? parsed.content : "";
   return {

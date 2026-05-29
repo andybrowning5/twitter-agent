@@ -88,8 +88,14 @@ stdout: {"type":"response","content":"## Summary ... \n\n## Sources\n1. [X] ..."
 ```
 
 A single CLI argument is accepted as a one-shot prompt (dry-run path). Plain
-text or a `{"type":"message","content":"..."}` envelope are both accepted and
-treated as the `query`.
+text or a `{"type":"message","content":"..."}` envelope are both accepted.
+
+The MCP transport (`run_agent`/`send_message`) only gives callers a single
+`content` string, so `coerceMessage` also accepts a structured inputs object
+passed *as* that string — `content: '{"query":"...","mode":"expert_opinions"}'`
+(or a full `{"inputs":{...}}`). Without this, `mode`/`handles`/dates are
+unreachable through MCP and every call silently defaults to `search_tweets`.
+Plain (non-JSON) content is still treated as the `query`.
 
 ## Model
 
