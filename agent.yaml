@@ -1,0 +1,82 @@
+name: twitter-agent
+display_name: Twitter (X) Agent
+description: >
+  Searches and reads public X (Twitter) using xAI Grok's server-side x_search
+  tool. Three modes: "search_tweets" (semantic search for posts about a topic,
+  not just keyword matching), "search_accounts" (find relevant accounts/handles
+  and what they post about), and "trending" (what's happening / being discussed
+  right now on a topic). Supports restricting to specific handles and date
+  windows. Returns Grok's synthesized answer plus source links to the
+  originating posts. Reads PUBLIC X only — it cannot access a private home
+  timeline.
+version: 0.1.0
+author:
+  name: Primordial Morpheus
+  github: andybrowning5
+
+runtime:
+  language: node
+  run_command: node bundle.mjs
+  setup_command: npm install && npm run build
+  dependencies: package.json
+  default_provider: xai
+
+model: grok-4.3
+
+keys:
+  - provider: xai
+    required: true
+
+inputs:
+  - name: query
+    type: string
+    required: true
+    description: >
+      What to find on X, in natural language. Examples: "the strongest
+      arguments people are making against the new EU AI rules", "developers
+      reacting to the latest React release", "who are the most-cited accounts
+      on small-model fine-tuning".
+  - name: mode
+    type: string
+    required: false
+    default: search_tweets
+    description: >
+      One of "search_tweets" (default — semantic search for posts on a topic),
+      "search_accounts" (identify relevant accounts/handles and what they post
+      about), or "trending" (summarize what's being discussed right now on the
+      topic).
+  - name: handles
+    type: string
+    required: false
+    description: >
+      Optional comma-separated list of X handles (without @, max 20) to
+      restrict the search to. Example: "sama,karpathy,ylecun".
+  - name: exclude_handles
+    type: string
+    required: false
+    description: >
+      Optional comma-separated list of X handles (without @, max 20) to exclude
+      from results.
+  - name: from_date
+    type: string
+    required: false
+    description: Optional earliest date for posts, ISO 8601 (YYYY-MM-DD).
+  - name: to_date
+    type: string
+    required: false
+    description: Optional latest date for posts, ISO 8601 (YYYY-MM-DD).
+
+outputs:
+  - name: response
+    type: string
+    description: >
+      Grok's synthesized answer to the query, followed by a "Sources:" section
+      listing the originating X posts (handle + link) that back the answer.
+
+tags:
+  - twitter
+  - x
+  - social
+  - search
+  - grok
+  - trending

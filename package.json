@@ -1,0 +1,16 @@
+{
+  "name": "twitter-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "bundle.mjs",
+  "scripts": {
+    "build": "esbuild src/agent.ts --bundle --platform=node --target=node20 --format=esm --outfile=bundle.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "start": "node bundle.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.4.0"
+  }
+}
