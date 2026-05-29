@@ -71,10 +71,21 @@ Only the `message`'s `output_text` block carries `annotations[]` of type
 - Grok annotates only a handful of `url_citation`s even when the body references
   many sources, and `search_accounts` writes profile/post links straight into the
   prose that never become annotations. So `extractFromResponse` ALSO harvests every
-  bare URL from the text via `URL_RE` and dedupes by URL. The `GROUNDING` prompt
-  tells the model to write real inline source URLs precisely so this harvest has
-  links to grab. `web_search_call` items do **not** expose their result URLs, so
-  annotations + harvested prose URLs are the only source of truth.
+  bare URL from the text via `URL_RE`. The `GROUNDING` prompt tells the model to
+  write real inline source URLs precisely so this harvest has links to grab.
+  `web_search_call` items do **not** expose their result URLs, so annotations +
+  harvested prose URLs are the only source of truth.
+
+The same post/account shows up in two URL shapes: the readable
+`x.com/<handle>/status/<id>` and `x.com/<handle>` forms the model writes in prose,
+and the opaque `x.com/i/status/<id>` / `x.com/i/user/<id>` forms xAI emits as
+annotations. So `extractFromResponse` dedupes by a `citationKey` — tweet id for
+posts, handle for profiles, normalized host+path for the open web — not by the raw
+URL string. When both shapes of one post arrive, the readable form upgrades the
+opaque one in place (`Map.set` on an existing key keeps its position). Opaque
+`x.com/i/user/<id>` profile links have no handle to recover and no readable
+counterpart, so `citationKey` returns `null` and they're dropped rather than
+listed as a meaningless `[X] x.com`.
 
 `extractFromResponse` still also reads a flat top-level `citations` array if one
 appears — keep it defensive, the shape has shifted across xAI API versions. Each
@@ -129,6 +140,8 @@ trending `from_date = now − 3d` default (and that a caller date overrides it),
 handle parsing, that `instructions` carry the `GROUNDING` block + the right mode
 block, and that `## Sources` renders with `[X]`/`[web]` labels. Specifically
 cover the citation logic: a numeric `title` is ignored in favor of an
-`@handle`/hostname label, and a bare URL written only in the body text is
-harvested into `## Sources`. Also confirm the stdin path echoes `message_id` and
-exits cleanly on `{"type":"shutdown"}`.
+`@handle`/hostname label, a bare URL written only in the body text is harvested
+into `## Sources`, the opaque `x.com/i/status/<id>` and readable
+`x.com/<handle>/status/<id>` forms of one post collapse to a single `@handle`
+entry, and an opaque `x.com/i/user/<id>` profile link is dropped. Also confirm
+the stdin path echoes `message_id` and exits cleanly on `{"type":"shutdown"}`.

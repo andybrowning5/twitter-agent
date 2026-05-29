@@ -103,15 +103,43 @@ function inferSource(url) {
     return "web";
   }
 }
+function citationKey(url, source) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return url;
+  }
+  if (source !== "x") {
+    return u.hostname.toLowerCase().replace(/^www\./, "") + u.pathname.replace(/\/+$/, "") + u.search;
+  }
+  const parts = u.pathname.split("/").filter(Boolean);
+  const statusIdx = parts.indexOf("status");
+  if (statusIdx >= 0 && parts[statusIdx + 1]) return "status:" + parts[statusIdx + 1];
+  const handle = parts[0];
+  if (!handle || handle === "i") return null;
+  return "user:" + handle.toLowerCase();
+}
+function isOpaqueXPath(url) {
+  try {
+    return new URL(url).pathname.split("/").filter(Boolean)[0] === "i";
+  } catch {
+    return false;
+  }
+}
 function extractFromResponse(data) {
   let text = "";
-  const citations = [];
-  const seen = /* @__PURE__ */ new Set();
+  const byKey = /* @__PURE__ */ new Map();
   const addCitation = (url, title, source) => {
-    if (typeof url !== "string" || !url || seen.has(url)) return;
-    seen.add(url);
+    if (typeof url !== "string" || !url) return;
     const src = source === "x" || source === "web" ? source : inferSource(url);
-    citations.push({ url, title: typeof title === "string" ? title : void 0, source: src });
+    const key = citationKey(url, src);
+    if (key === null) return;
+    const cite = { url, title: typeof title === "string" ? title : void 0, source: src };
+    const existing = byKey.get(key);
+    if (!existing || isOpaqueXPath(existing.url) && !isOpaqueXPath(url)) {
+      byKey.set(key, cite);
+    }
   };
   if (typeof data?.output_text === "string") text += data.output_text;
   const output = Array.isArray(data?.output) ? data.output : [];
@@ -136,7 +164,7 @@ function extractFromResponse(data) {
   for (const url of text.match(URL_RE) || []) {
     addCitation(url.replace(/[)\].,;:'"]+$/, ""));
   }
-  return { text: text.trim(), citations };
+  return { text: text.trim(), citations: [...byKey.values()] };
 }
 function citationLabel(c) {
   const t = c.title?.trim();

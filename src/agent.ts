@@ -254,16 +254,57 @@ function inferSource(url: string): "x" | "web" {
   }
 }
 
+// X URLs arrive in two shapes: the readable x.com/<handle>/status/<id> and
+// x.com/<handle> forms the model writes in prose, and the opaque
+// x.com/i/status/<id> / x.com/i/user/<id> forms xAI emits as annotations. This
+// key collapses both shapes of the same post (by tweet id) or account (by
+// handle) into one entry. Opaque profile links (x.com/i/user/<id>) carry no
+// handle and no readable counterpart to recover one, so they return null and
+// get dropped rather than listed as a meaningless "[X] x.com".
+function citationKey(url: string, source: "x" | "web"): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return url;
+  }
+  if (source !== "x") {
+    return u.hostname.toLowerCase().replace(/^www\./, "") + u.pathname.replace(/\/+$/, "") + u.search;
+  }
+  const parts = u.pathname.split("/").filter(Boolean);
+  const statusIdx = parts.indexOf("status");
+  if (statusIdx >= 0 && parts[statusIdx + 1]) return "status:" + parts[statusIdx + 1];
+  const handle = parts[0];
+  if (!handle || handle === "i") return null; // opaque profile (x.com/i/user/<id>) — drop
+  return "user:" + handle.toLowerCase();
+}
+
+// True for the opaque x.com/i/... forms whose first path segment is "i".
+function isOpaqueXPath(url: string): boolean {
+  try {
+    return new URL(url).pathname.split("/").filter(Boolean)[0] === "i";
+  } catch {
+    return false;
+  }
+}
+
 function extractFromResponse(data: any): { text: string; citations: Citation[] } {
   let text = "";
-  const citations: Citation[] = [];
-  const seen = new Set<string>();
+  const byKey = new Map<string, Citation>();
 
   const addCitation = (url: unknown, title?: unknown, source?: unknown) => {
-    if (typeof url !== "string" || !url || seen.has(url)) return;
-    seen.add(url);
+    if (typeof url !== "string" || !url) return;
     const src = source === "x" || source === "web" ? source : inferSource(url);
-    citations.push({ url, title: typeof title === "string" ? title : undefined, source: src });
+    const key = citationKey(url, src);
+    if (key === null) return; // opaque, unidentifiable (x.com/i/user/<id>) — drop
+    const cite: Citation = { url, title: typeof title === "string" ? title : undefined, source: src };
+    const existing = byKey.get(key);
+    // First form claims the slot, but a readable x.com/<handle>/... form upgrades
+    // an opaque x.com/i/... one already captured for the same post — Map.set on
+    // an existing key keeps the original position while swapping in the better URL.
+    if (!existing || (isOpaqueXPath(existing.url) && !isOpaqueXPath(url))) {
+      byKey.set(key, cite);
+    }
   };
 
   // Convenience aggregate some responses include.
@@ -294,12 +335,13 @@ function extractFromResponse(data: any): { text: string; citations: Citation[] }
   // Grok annotates only a handful of url_citations even when the body cites many
   // sources — and modes like search_accounts write profile/post links straight
   // into the prose that never become annotations. Harvest every real URL from
-  // the text too; addCitation dedupes, so this only ADDS the links we'd miss.
+  // the text too; addCitation dedupes, so this only ADDS the links we'd miss
+  // (and upgrades opaque annotation URLs to their readable prose form).
   for (const url of text.match(URL_RE) || []) {
     addCitation(url.replace(/[)\].,;:'"]+$/, ""));
   }
 
-  return { text: text.trim(), citations };
+  return { text: text.trim(), citations: [...byKey.values()] };
 }
 
 // xAI's url_citation `title` is useless as a label: sometimes the visible
