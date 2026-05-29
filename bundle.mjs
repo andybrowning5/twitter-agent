@@ -145,6 +145,37 @@ function formatSources(citations) {
 ## Sources
 ${lines.join("\n")}`;
 }
+function debugDump(data) {
+  const L = [];
+  L.push("TOP-LEVEL KEYS: " + Object.keys(data || {}).join(", "));
+  const output = Array.isArray(data?.output) ? data.output : [];
+  L.push(`output[] length: ${output.length}`);
+  output.forEach((item, i) => {
+    L.push(`
+[${i}] type=${item?.type} keys={${Object.keys(item || {}).join(",")}}`);
+    for (const k of Object.keys(item || {})) {
+      const v = item[k];
+      if (typeof v === "string" && /^https?:\/\//.test(v)) L.push(`    ${k}=${v}`);
+      else if (Array.isArray(v)) {
+        L.push(`    ${k}[] len=${v.length}`);
+        if (v.length && typeof v[0] === "object") L.push(`      ${k}[0]=${JSON.stringify(v[0]).slice(0, 400)}`);
+      }
+    }
+    const content = Array.isArray(item?.content) ? item.content : [];
+    content.forEach((b, j) => {
+      L.push(`    content[${j}] type=${b?.type} keys={${Object.keys(b || {}).join(",")}}`);
+      const anns = Array.isArray(b?.annotations) ? b.annotations : [];
+      L.push(`      annotations len=${anns.length}`);
+      if (anns.length) L.push(`      ann[0]=${JSON.stringify(anns[0])}`);
+    });
+  });
+  if (Array.isArray(data?.citations)) {
+    L.push(`
+top-level citations[] len=${data.citations.length}`);
+    if (data.citations.length) L.push(`  [0]=${JSON.stringify(data.citations[0])}`);
+  }
+  return "```\n" + L.join("\n").slice(0, 9e3) + "\n```";
+}
 async function handleMessage(msg, messageId) {
   const query = (msg.query ?? "").trim();
   const mode = VALID_MODES.includes(msg.mode) ? msg.mode : "search_tweets";
@@ -215,6 +246,10 @@ async function handleMessage(msg, messageId) {
   } finally {
     clearTimeout(timer);
   }
+  if (msg.debug) {
+    emit(withId({ type: "response", content: debugDump(data), done: true }, messageId));
+    return;
+  }
   const { text, citations } = extractFromResponse(data);
   if (!text) {
     emit(withId({
@@ -245,7 +280,8 @@ function coerceMessage(parsed) {
     handles: src.handles,
     exclude_handles: src.exclude_handles,
     from_date: src.from_date,
-    to_date: src.to_date
+    to_date: src.to_date,
+    debug: src.debug === true
   };
 }
 function parseIncoming(raw) {
