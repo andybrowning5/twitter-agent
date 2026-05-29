@@ -66,8 +66,9 @@ Only the `message`'s `output_text` block carries `annotations[]` of type
 
 - A citation's `title` is just the visible NUMBER (`"1"`, `"2"`), **not** a page
   title. `citationLabel` therefore derives the label from the URL — `@handle` for
-  X posts/profiles, hostname for the open web — and only trusts `title` when it's
-  non-numeric (in case a future API version supplies real titles).
+  X posts/profiles, `post` for an opaque `x.com/i/status/<id>` tweet with no
+  readable form to recover a handle from, hostname for the open web — and only
+  trusts `title` when it's non-numeric (in case a future API version supplies one).
 - Grok annotates only a handful of `url_citation`s even when the body references
   many sources, and `search_accounts` writes profile/post links straight into the
   prose that never become annotations. So `extractFromResponse` ALSO harvests every
@@ -84,8 +85,9 @@ posts, handle for profiles, normalized host+path for the open web — not by the
 URL string. When both shapes of one post arrive, the readable form upgrades the
 opaque one in place (`Map.set` on an existing key keeps its position). Opaque
 `x.com/i/user/<id>` profile links have no handle to recover and no readable
-counterpart, so `citationKey` returns `null` and they're dropped rather than
-listed as a meaningless `[X] x.com`.
+counterpart, so `citationKey` returns `null` and they're dropped entirely. An
+opaque `x.com/i/status/<id>` tweet with no readable counterpart is still a real
+post, so it's kept and labeled `[X] post` rather than the bare host.
 
 `extractFromResponse` still also reads a flat top-level `citations` array if one
 appears — keep it defensive, the shape has shifted across xAI API versions. Each

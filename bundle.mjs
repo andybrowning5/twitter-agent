@@ -173,8 +173,9 @@ function citationLabel(c) {
     const u = new URL(c.url);
     const host = u.hostname.replace(/^www\./, "");
     if (c.source === "x") {
-      const handle = u.pathname.split("/").filter(Boolean)[0];
-      if (handle && handle !== "i") return "@" + handle;
+      const parts = u.pathname.split("/").filter(Boolean);
+      if (parts[0] && parts[0] !== "i") return "@" + parts[0];
+      if (parts.includes("status")) return "post";
     }
     return host;
   } catch {

@@ -356,8 +356,11 @@ function citationLabel(c: Citation): string {
     const u = new URL(c.url);
     const host = u.hostname.replace(/^www\./, "");
     if (c.source === "x") {
-      const handle = u.pathname.split("/").filter(Boolean)[0];
-      if (handle && handle !== "i") return "@" + handle;
+      const parts = u.pathname.split("/").filter(Boolean);
+      if (parts[0] && parts[0] !== "i") return "@" + parts[0];
+      // Opaque x.com/i/status/<id> with no readable form in prose: a real post
+      // whose author the URL doesn't name. "post" beats the bare "x.com" host.
+      if (parts.includes("status")) return "post";
     }
     return host;
   } catch {
